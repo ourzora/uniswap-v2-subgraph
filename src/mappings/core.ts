@@ -26,7 +26,11 @@ import {
 } from './helpers'
 
 function isCompleteMint(mintId: string): boolean {
-  return MintEvent.load(mintId).sender !== null // sufficient checks
+  const mintEvent = MintEvent.load(mintId);
+  if (mintEvent == null) {
+    return false;
+  }
+  return mintEvent.sender !== null; // sufficient checks
 }
 
 export function handleTransfer(event: Transfer): void {
@@ -46,6 +50,9 @@ export function handleTransfer(event: Transfer): void {
 
   // get pair and load contract
   let pair = Pair.load(event.address.toHexString())
+  if (!pair || !factory) {
+    return;
+  }
   let pairContract = PairContract.bind(event.address)
 
   // liquidity token amount being transfered
@@ -130,8 +137,11 @@ export function handleTransfer(event: Transfer): void {
     let burn: BurnEvent
     if (burns.length > 0) {
       let currentBurn = BurnEvent.load(burns[burns.length - 1])
+      if (!currentBurn) {
+        return;
+      }
       if (currentBurn.needsComplete) {
-        burn = currentBurn as BurnEvent
+        burn = currentBurn
       } else {
         burn = new BurnEvent(
           event.transaction.hash
@@ -164,6 +174,9 @@ export function handleTransfer(event: Transfer): void {
     // if this logical burn included a fee mint, account for this
     if (mints.length !== 0 && !isCompleteMint(mints[mints.length - 1])) {
       let mint = MintEvent.load(mints[mints.length - 1])
+      if (!mint) {
+        return;
+      }
       burn.feeTo = mint.to
       burn.feeLiquidity = mint.liquidity
       // remove the logical mint
@@ -195,6 +208,9 @@ export function handleTransfer(event: Transfer): void {
 
   if (from.toHexString() != ADDRESS_ZERO && from.toHexString() != pair.id) {
     let fromUserLiquidityPosition = createLiquidityPosition(event.address, from)
+    if (!fromUserLiquidityPosition) {
+      return;
+    }
     fromUserLiquidityPosition.liquidityTokenBalance = convertTokenToDecimal(pairContract.balanceOf(from), BI_18)
     fromUserLiquidityPosition.save()
     createLiquiditySnapshot(fromUserLiquidityPosition, event)
@@ -202,6 +218,9 @@ export function handleTransfer(event: Transfer): void {
 
   if (event.params.to.toHexString() != ADDRESS_ZERO && to.toHexString() != pair.id) {
     let toUserLiquidityPosition = createLiquidityPosition(event.address, to)
+    if (!toUserLiquidityPosition) {
+      return;
+    }
     toUserLiquidityPosition.liquidityTokenBalance = convertTokenToDecimal(pairContract.balanceOf(to), BI_18)
     toUserLiquidityPosition.save()
     createLiquiditySnapshot(toUserLiquidityPosition, event)
@@ -212,12 +231,16 @@ export function handleTransfer(event: Transfer): void {
 
 export function handleSync(event: Sync): void {
   let pair = Pair.load(event.address.toHex())
-  let token0 = Token.load(pair.token0)
-  let token1 = Token.load(pair.token1)
+  let token0 = Token.load(pair!.token0)
+  let token1 = Token.load(pair!.token1)
   let uniswap = UniswapFactory.load(FACTORY_ADDRESS)
 
+  if (!uniswap || !token0 || !token1 || !pair) {
+    return;
+  }
+
   // reset factory liquidity by subtracting onluy tarcked liquidity
-  uniswap.totalLiquidityETH = uniswap.totalLiquidityETH.minus(pair.trackedReserveETH as BigDecimal)
+  uniswap.totalLiquidityETH = uniswap.totalLiquidityETH.minus(pair.trackedReserveETH)
 
   // reset token total liquidity amounts
   token0.totalLiquidity = token0.totalLiquidity.minus(pair.reserve0)
@@ -235,18 +258,21 @@ export function handleSync(event: Sync): void {
 
   // update ETH price now that reserves could have changed
   let bundle = Bundle.load('1')
+  if (!bundle) {
+    return;
+  }
   bundle.ethPrice = getEthPriceInUSD()
   bundle.save()
 
-  token0.derivedETH = findEthPerToken(token0 as Token)
-  token1.derivedETH = findEthPerToken(token1 as Token)
+  token0.derivedETH = findEthPerToken(token0)
+  token1.derivedETH = findEthPerToken(token1)
   token0.save()
   token1.save()
 
   // get tracked liquidity - will be 0 if neither is in whitelist
   let trackedLiquidityETH: BigDecimal
   if (bundle.ethPrice.notEqual(ZERO_BD)) {
-    trackedLiquidityETH = getTrackedLiquidityUSD(pair.reserve0, token0 as Token, pair.reserve1, token1 as Token).div(
+    trackedLiquidityETH = getTrackedLiquidityUSD(pair.reserve0, token0, pair.reserve1, token1).div(
       bundle.ethPrice
     )
   } else {
@@ -256,8 +282,8 @@ export function handleSync(event: Sync): void {
   // use derived amounts within pair
   pair.trackedReserveETH = trackedLiquidityETH
   pair.reserveETH = pair.reserve0
-    .times(token0.derivedETH as BigDecimal)
-    .plus(pair.reserve1.times(token1.derivedETH as BigDecimal))
+    .times(token0.derivedETH!)
+    .plus(pair.reserve1.times(token1.derivedETH!))
   pair.reserveUSD = pair.reserveETH.times(bundle.ethPrice)
 
   // use tracked amounts globally
@@ -277,14 +303,23 @@ export function handleSync(event: Sync): void {
 
 export function handleMint(event: Mint): void {
   let transaction = Transaction.load(event.transaction.hash.toHexString())
+  if (!transaction) {
+    return;
+  }
   let mints = transaction.mints
   let mint = MintEvent.load(mints[mints.length - 1])
 
   let pair = Pair.load(event.address.toHex())
+  if (!pair) {
+    return;
+  }
   let uniswap = UniswapFactory.load(FACTORY_ADDRESS)
 
   let token0 = Token.load(pair.token0)
   let token1 = Token.load(pair.token1)
+  if (!token0 || !token1) {
+    return;
+  }
 
   // update exchange info (except balances, sync will cover that)
   let token0Amount = convertTokenToDecimal(event.params.amount0, token0.decimals)
@@ -296,38 +331,51 @@ export function handleMint(event: Mint): void {
 
   // get new amounts of USD and ETH for tracking
   let bundle = Bundle.load('1')
-  let amountTotalUSD = token1.derivedETH
+  if (!bundle) {
+    return;
+  }
+  let amountTotalUSD = token1.derivedETH!
     .times(token1Amount)
-    .plus(token0.derivedETH.times(token0Amount))
+    .plus((token0.derivedETH!).times(token0Amount))
     .times(bundle.ethPrice)
 
   // update txn counts
   pair.txCount = pair.txCount.plus(ONE_BI)
-  uniswap.txCount = uniswap.txCount.plus(ONE_BI)
+  if (uniswap) {
+    uniswap.txCount = uniswap.txCount.plus(ONE_BI)
+  }
 
   // save entities
   token0.save()
   token1.save()
   pair.save()
-  uniswap.save()
+  if (uniswap) {
+    uniswap.save()
+  }
 
+  if (!mint) {
+    return;
+  }
   mint.sender = event.params.sender
-  mint.amount0 = token0Amount as BigDecimal
-  mint.amount1 = token1Amount as BigDecimal
+  mint.amount0 = token0Amount
+  mint.amount1 = token1Amount
   mint.logIndex = event.logIndex
-  mint.amountUSD = amountTotalUSD as BigDecimal
+  mint.amountUSD = amountTotalUSD
   mint.save()
 
   // update the LP position
-  let liquidityPosition = createLiquidityPosition(event.address, mint.to as Address)
+  const liquidityPosition = createLiquidityPosition(event.address, Address.fromBytes(mint.to!))
+  if (!liquidityPosition) {
+    return;
+  }
   createLiquiditySnapshot(liquidityPosition, event)
 
   // update day entities
   updatePairDayData(event)
   updatePairHourData(event)
   updateUniswapDayData(event)
-  updateTokenDayData(token0 as Token, event)
-  updateTokenDayData(token1 as Token, event)
+  updateTokenDayData(token0, event)
+  updateTokenDayData(token1, event)
 }
 
 export function handleBurn(event: Burn): void {
@@ -344,9 +392,17 @@ export function handleBurn(event: Burn): void {
   let pair = Pair.load(event.address.toHex())
   let uniswap = UniswapFactory.load(FACTORY_ADDRESS)
 
+  if (!pair) {
+    return;
+  }
+
   //update token info
   let token0 = Token.load(pair.token0)
   let token1 = Token.load(pair.token1)
+  if (!token0 || !token1) {
+    return;
+  }
+
   let token0Amount = convertTokenToDecimal(event.params.amount0, token0.decimals)
   let token1Amount = convertTokenToDecimal(event.params.amount1, token1.decimals)
 
@@ -356,46 +412,66 @@ export function handleBurn(event: Burn): void {
 
   // get new amounts of USD and ETH for tracking
   let bundle = Bundle.load('1')
-  let amountTotalUSD = token1.derivedETH
+  if (!bundle) {
+    return;
+  }
+  let amountTotalUSD = token1.derivedETH!
     .times(token1Amount)
-    .plus(token0.derivedETH.times(token0Amount))
+    .plus((token0.derivedETH!).times(token0Amount))
     .times(bundle.ethPrice)
 
-  // update txn counts
-  uniswap.txCount = uniswap.txCount.plus(ONE_BI)
+    if (uniswap){ 
+      // update txn counts
+      uniswap.txCount = uniswap.txCount.plus(ONE_BI)
+    }
   pair.txCount = pair.txCount.plus(ONE_BI)
 
   // update global counter and save
   token0.save()
   token1.save()
   pair.save()
-  uniswap.save()
+  if (uniswap) {
+    uniswap.save()
+  }
 
   // update burn
   // burn.sender = event.params.sender
-  burn.amount0 = token0Amount as BigDecimal
-  burn.amount1 = token1Amount as BigDecimal
+  if (!burn) {
+    return;
+  }
+
+  burn.amount0 = token0Amount
+  burn.amount1 = token1Amount
   // burn.to = event.params.to
   burn.logIndex = event.logIndex
-  burn.amountUSD = amountTotalUSD as BigDecimal
+  burn.amountUSD = amountTotalUSD
   burn.save()
 
   // update the LP position
-  let liquidityPosition = createLiquidityPosition(event.address, burn.sender as Address)
+  let liquidityPosition = createLiquidityPosition(event.address, Address.fromBytes(burn.sender!))
+  if (!liquidityPosition) {
+    return;
+  }
   createLiquiditySnapshot(liquidityPosition, event)
 
   // update day entities
   updatePairDayData(event)
   updatePairHourData(event)
   updateUniswapDayData(event)
-  updateTokenDayData(token0 as Token, event)
-  updateTokenDayData(token1 as Token, event)
+  updateTokenDayData(token0, event)
+  updateTokenDayData(token1, event)
 }
 
 export function handleSwap(event: Swap): void {
   let pair = Pair.load(event.address.toHexString())
+  if (!pair) {
+    return;
+  }
   let token0 = Token.load(pair.token0)
   let token1 = Token.load(pair.token1)
+  if (!token0 || !token1) {
+    return;
+  }
   let amount0In = convertTokenToDecimal(event.params.amount0In, token0.decimals)
   let amount1In = convertTokenToDecimal(event.params.amount1In, token1.decimals)
   let amount0Out = convertTokenToDecimal(event.params.amount0Out, token0.decimals)
@@ -409,14 +485,17 @@ export function handleSwap(event: Swap): void {
   let bundle = Bundle.load('1')
 
   // get total amounts of derived USD and ETH for tracking
-  let derivedAmountETH = token1.derivedETH
+  let derivedAmountETH = token1.derivedETH!
     .times(amount1Total)
-    .plus(token0.derivedETH.times(amount0Total))
+    .plus((token0.derivedETH!).times(amount0Total))
     .div(BigDecimal.fromString('2'))
+    if (!bundle) {
+      return;
+    }
   let derivedAmountUSD = derivedAmountETH.times(bundle.ethPrice)
 
   // only accounts for volume through white listed tokens
-  let trackedAmountUSD = getTrackedVolumeUSD(amount0Total, token0 as Token, amount1Total, token1 as Token, pair as Pair)
+  let trackedAmountUSD = getTrackedVolumeUSD(amount0Total, token0, amount1Total, token1, pair)
 
   let trackedAmountETH: BigDecimal
   if (bundle.ethPrice.equals(ZERO_BD)) {
@@ -449,16 +528,19 @@ export function handleSwap(event: Swap): void {
 
   // update global values, only used tracked amounts for volume
   let uniswap = UniswapFactory.load(FACTORY_ADDRESS)
-  uniswap.totalVolumeUSD = uniswap.totalVolumeUSD.plus(trackedAmountUSD)
-  uniswap.totalVolumeETH = uniswap.totalVolumeETH.plus(trackedAmountETH)
-  uniswap.untrackedVolumeUSD = uniswap.untrackedVolumeUSD.plus(derivedAmountUSD)
-  uniswap.txCount = uniswap.txCount.plus(ONE_BI)
+
+  if (uniswap) {
+    uniswap.totalVolumeUSD = uniswap.totalVolumeUSD.plus(trackedAmountUSD)
+    uniswap.totalVolumeETH = uniswap.totalVolumeETH.plus(trackedAmountETH)
+    uniswap.untrackedVolumeUSD = uniswap.untrackedVolumeUSD.plus(derivedAmountUSD)
+    uniswap.txCount = uniswap.txCount.plus(ONE_BI)
+    uniswap.save()
+  }
 
   // save entities
   pair.save()
   token0.save()
   token1.save()
-  uniswap.save()
 
   let transaction = Transaction.load(event.transaction.hash.toHexString())
   if (transaction === null) {
@@ -506,8 +588,8 @@ export function handleSwap(event: Swap): void {
   let pairDayData = updatePairDayData(event)
   let pairHourData = updatePairHourData(event)
   let uniswapDayData = updateUniswapDayData(event)
-  let token0DayData = updateTokenDayData(token0 as Token, event)
-  let token1DayData = updateTokenDayData(token1 as Token, event)
+  let token0DayData = updateTokenDayData(token0, event)
+  let token1DayData = updateTokenDayData(token1, event)
 
   // swap specific updating
   uniswapDayData.dailyVolumeUSD = uniswapDayData.dailyVolumeUSD.plus(trackedAmountUSD)
@@ -529,17 +611,17 @@ export function handleSwap(event: Swap): void {
 
   // swap specific updating for token0
   token0DayData.dailyVolumeToken = token0DayData.dailyVolumeToken.plus(amount0Total)
-  token0DayData.dailyVolumeETH = token0DayData.dailyVolumeETH.plus(amount0Total.times(token0.derivedETH as BigDecimal))
+  token0DayData.dailyVolumeETH = token0DayData.dailyVolumeETH.plus(amount0Total.times(token0.derivedETH!))
   token0DayData.dailyVolumeUSD = token0DayData.dailyVolumeUSD.plus(
-    amount0Total.times(token0.derivedETH as BigDecimal).times(bundle.ethPrice)
+    amount0Total.times(token0.derivedETH!).times(bundle.ethPrice)
   )
   token0DayData.save()
 
   // swap specific updating
   token1DayData.dailyVolumeToken = token1DayData.dailyVolumeToken.plus(amount1Total)
-  token1DayData.dailyVolumeETH = token1DayData.dailyVolumeETH.plus(amount1Total.times(token1.derivedETH as BigDecimal))
+  token1DayData.dailyVolumeETH = token1DayData.dailyVolumeETH.plus(amount1Total.times(token1.derivedETH!))
   token1DayData.dailyVolumeUSD = token1DayData.dailyVolumeUSD.plus(
-    amount1Total.times(token1.derivedETH as BigDecimal).times(bundle.ethPrice)
+    amount1Total.times(token1.derivedETH!).times(bundle.ethPrice)
   )
   token1DayData.save()
 }
