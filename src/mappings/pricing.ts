@@ -4,18 +4,18 @@ import { BigDecimal, Address, BigInt } from '@graphprotocol/graph-ts/index'
 import { ZERO_BD, factoryContract, ADDRESS_ZERO, ONE_BD, UNTRACKED_PAIRS } from './helpers'
 
 const WETH_ADDRESS = '0x4200000000000000000000000000000000000006'
-// const USDC_WETH_PAIR = '0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc' // created 10008355
+const USDC_WETH_PAIR = '0x88Ac3948338b624b0A66015D8A9c9d1D7eD9FdAd' // created block 11616039
 // const DAI_WETH_PAIR = '0xa478c2975ab1ea89e8196811f51a7b7ade33eb11' // created block 10042267
 // const USDT_WETH_PAIR = '0x0d4a11d5eeaac28ec3f61d100daf4d40471f1852' // created block 10093341
 
 export function getEthPriceInUSD(): BigDecimal {
-  return ZERO_BD;
   // fetch eth prices for each stablecoin
-  let daiPair = Pair.load(DAI_WETH_PAIR) // dai is token0
-  let usdcPair = Pair.load(USDC_WETH_PAIR) // usdc is token0
-  let usdtPair = Pair.load(USDT_WETH_PAIR) // usdt is token1
+  // let daiPair = Pair.load(DAI_WETH_PAIR) // dai is token0
+  let usdcPair = Pair.load(USDC_WETH_PAIR) // usdc is token1
+  // let usdtPair = Pair.load(USDT_WETH_PAIR) // usdt is token1
 
   // all 3 have been created
+  /*
   if (daiPair !== null && usdcPair !== null && usdtPair !== null) {
     let totalLiquidityETH = daiPair.reserve1.plus(usdcPair.reserve1).plus(usdtPair.reserve0)
     let daiWeight = daiPair.reserve1.div(totalLiquidityETH)
@@ -32,8 +32,9 @@ export function getEthPriceInUSD(): BigDecimal {
     let usdcWeight = usdcPair.reserve1.div(totalLiquidityETH)
     return daiPair.token0Price.times(daiWeight).plus(usdcPair.token0Price.times(usdcWeight))
     // USDC is the only pair so far
-  } else if (usdcPair !== null) {
-    return usdcPair.token0Price
+  } else*/
+  if (usdcPair !== null) {
+    return usdcPair.token1Price;
   } else {
     return ZERO_BD
   }
@@ -43,7 +44,7 @@ export function getEthPriceInUSD(): BigDecimal {
 let WHITELIST: string[] = [
   '0x4200000000000000000000000000000000000006', // WETH
   // '0x6b175474e89094c44da98b954eedeac495271d0f', // DAI
-  // '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', // USDC
+  '0xCccCCccc7021b32EBb4e8C08314bD62F7c653EC4', // USDC
   // '0xdac17f958d2ee523a2206206994597c13d831ec7', // USDT
   // '0x0000000000085d4780b73119b644ae5ecd22b376', // TUSD
   // '0x5d3a536e4d6dbd6114cc1ead35777bab948e3643', // cDAI
@@ -78,7 +79,6 @@ export function findEthPerToken(token: Token): BigDecimal {
   if (token.id == WETH_ADDRESS) {
     return ONE_BD
   }
-  return ZERO_BD;
   // loop through whitelist and check if paired with any
   for (let i = 0; i < WHITELIST.length; ++i) {
     let pairAddress = factoryContract.getPair(Address.fromString(token.id), Address.fromString(WHITELIST[i]))
