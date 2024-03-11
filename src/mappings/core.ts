@@ -364,7 +364,7 @@ export function handleMint(event: Mint): void {
   mint.save()
 
   // update the LP position
-  const liquidityPosition = createLiquidityPosition(event.address, Address.fromBytes(mint.to!))
+  const liquidityPosition = createLiquidityPosition(event.address, Address.fromBytes(mint.to))
   if (!liquidityPosition) {
     return;
   }
