@@ -1,7 +1,7 @@
 /* eslint-disable prefer-const */
-import { log } from '@graphprotocol/graph-ts'
+import { log, ethereum } from '@graphprotocol/graph-ts'
 import { PairCreated } from '../types/Factory/Factory'
-import { Bundle, Pair, Token, UniswapFactory } from '../types/schema'
+import { Bundle, Pair, Token, UniswapFactory, Block } from '../types/schema'
 import { Pair as PairTemplate } from '../types/templates'
 import {
   FACTORY_ADDRESS,
@@ -12,6 +12,25 @@ import {
   ZERO_BD,
   ZERO_BI
 } from './helpers'
+
+export function handleBlock(block: ethereum.Block): void {
+  let id = block.hash.toHex()
+  let blockEntity = new Block(id);
+  blockEntity.number = block.number;
+  blockEntity.timestamp = block.timestamp;
+  blockEntity.parentHash = block.parentHash.toHex();
+  blockEntity.author = block.author.toHex();
+  blockEntity.difficulty = block.difficulty;
+  blockEntity.totalDifficulty = block.totalDifficulty;
+  blockEntity.gasUsed = block.gasUsed;
+  blockEntity.gasLimit = block.gasLimit;
+  blockEntity.receiptsRoot = block.receiptsRoot.toHex();
+  blockEntity.transactionsRoot = block.transactionsRoot.toHex();
+  blockEntity.stateRoot = block.stateRoot.toHex();
+  blockEntity.size = block.size;
+  blockEntity.unclesHash = block.unclesHash.toHex();
+  blockEntity.save();
+}
 
 export function handleNewPair(event: PairCreated): void {
   // load factory (create if first exchange)
